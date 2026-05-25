@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>縦書きビューア</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&family=Noto+Sans+JP:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ─── Reset & Base ─────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --paper:       #f7f3ec;
+  --paper-dark:  #ede8df;
+  --ink:         #1c1510;
+  --ink-mid:     #4a3f32;
+  --ink-faint:   #8c7b6a;
+  --red:         #8b1a1a;
+  --gold:        #c8a050;
+  --shadow:      rgba(80,50,20,.18);
+  --serif: "Noto Serif JP", "游明朝", "Yu Mincho", serif;
+  --sans:  "Noto Sans JP", sans-serif;
+}
+
+html, body {
+  height: 100%;
+  background: #2a2018;
+  font-family: var(--sans);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+/* ─── Layout ───────────────────────────────── */
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* ─── Header / Search Bar ──────────────────── */
+#topbar {
+  background: #1a1208;
+  border-bottom: 1px solid #3a2a10;
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+#topbar .logo {
+  font-family: var(--serif);
+  font-size: 15px;
+  color: var(--gold);
+  white-space: nowrap;
+  letter-spacing: .08em;
+}
+
+#url-input {
+  flex: 1;
+  background: #2c1f0a;
+  border: 1px solid #5a4020;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-family: var(--sans);
+  color: #e8dcc8;
+  outline: none;
+  transition: border-color .2s;
+}
+#url-input::placeholder { color: #6a5535; }
+#url-input:focus { border-color: var(--gold); }
+
+#fetch-btn {
+  background: var(--red);
+  color: #f5e8d8;
+  border: none;
+  border-radius: 6px;
+  padding: 7px 20px;
+  font-family: var(--serif);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, transform .1s;
+}
+#fetch-btn:hover { background: #a82020; }
+#fetch-btn:active { transform: scale(.97); }
+#fetch-btn:disabled { background: #4a2a2a; cursor: not-allowed; }
+
+/* ─── Status bar ───────────────────────────── */
+#statusbar {
+  background: #120d05;
+  border-bottom: 1px solid #2a1e08;
+  padding: 4px 20px;
+  font-size: 11px;
+  color: #7a6040;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+#statusbar .sep { color: #3a2a10; }
+
+/* ─── Viewer area ──────────────────────────── */
+#viewer-wrap {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+#page-track {
+  flex: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  display: flex;
+  align-items: center;
+  padding: 32px 48px;
+  gap: 0;
+  scroll-behavior: smooth;
+  direction: rtl; /* 右から左へスクロール（縦書き日本語の方向） */
+}
+
+/* ─── Page / Paper ─────────────────────────── */
+.page {
+  direction: ltr;
+  flex-shrink: 0;
+  width: 360px;
+  height: calc(100vh - 180px);
+  min-height: 500px;
+  background: var(--paper);
+  border-radius: 2px;
+  position: relative;
+  box-shadow:
+    2px 0 0 #c8b898,
+    6px 0 16px var(--shadow),
+    -1px 0 4px rgba(0,0,0,.25);
+  margin-left: 2px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 左綴じ用スパイン */
+.page::before {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(to right, #d4c8a8, #c0b490);
+  box-shadow: inset -1px 0 2px rgba(0,0,0,.15);
+}
+
+/* ページの横線（原稿用紙風） */
+.page-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+.page-lines::after {
+  content: "";
+  position: absolute;
+  inset: 48px 32px 48px 28px;
+  background-image: repeating-linear-gradient(
+    to left,
+    transparent,
+    transparent calc(1.65em - 1px),
+    rgba(160,140,110,.25) calc(1.65em - 1px),
+    rgba(160,140,110,.25) 1.65em
+  );
+  background-size: 1.65em 100%;
+}
+
+/* ページ番号 */
+.page-num {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-family: var(--serif);
+  color: var(--ink-faint);
+  letter-spacing: .15em;
+  z-index: 10;
+}
+
+/* ─── 縦書きコンテンツ ──────────────────────── */
+.page-content {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  position: absolute;
+  top: 40px;
+  right: 28px;
+  bottom: 40px;
+  left: 24px;
+  overflow: hidden;
+  z-index: 5;
+  font-family: var(--serif);
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--ink);
+}
+
+/* ─── テキストブロック種別 ─────────────────── */
+.t-heading {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--red);
+  letter-spacing: .08em;
+  margin-left: 12px;
+}
+
+.t-subheading {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink-mid);
+  border-right: 3px solid var(--gold);
+  padding-right: 6px;
+  margin-left: 10px;
+}
+
+.t-body {
+  font-size: 14.5px;
+  letter-spacing: .04em;
+  margin-left: 8px;
+}
+
+.t-quote {
+  font-size: 13.5px;
+  color: var(--ink-mid);
+  border-right: 3px double var(--ink-faint);
+  padding-right: 8px;
+  margin-left: 10px;
+}
+
+.block-sep {
+  display: inline-block;
+  width: 1em;
+}
+
+/* ─── Welcome / Empty state ────────────────── */
+#welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: #5a4830;
+}
+#welcome .welcome-title {
+  font-family: var(--serif);
+  font-size: 28px;
+  color: var(--gold);
+  letter-spacing: .15em;
+  writing-mode: vertical-rl;
+}
+#welcome .welcome-sub {
+  font-size: 13px;
+  color: #7a6040;
+  letter-spacing: .05em;
+}
+.welcome-row {
+  display: flex;
+  gap: 20px;
+  align-items: flex-end;
+}
+
+/* ─── Loading Spinner ───────────────────────── */
+#loading {
+  display: none;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  color: var(--gold);
+  font-family: var(--serif);
+  font-size: 15px;
+  letter-spacing: .1em;
+}
+.spinner {
+  width: 36px;
+  height: 36px;
+  border: 2px solid #3a2a10;
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ─── Error ─────────────────────────────────── */
+#error-box {
+  display: none;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  color: #c85050;
+  font-size: 14px;
+  letter-spacing: .05em;
+}
+
+/* ─── Navigation footer ─────────────────────── */
+#nav-footer {
+  background: #120d05;
+  border-top: 1px solid #2a1e08;
+  padding: 8px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.nav-btn {
+  background: #2c1f0a;
+  border: 1px solid #4a3520;
+  color: #c8a878;
+  font-family: var(--serif);
+  font-size: 13px;
+  padding: 5px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.nav-btn:hover { background: #3c2a10; }
+.nav-btn:disabled { opacity: .35; cursor: not-allowed; }
+
+#page-indicator {
+  font-family: var(--serif);
+  font-size: 12px;
+  color: #7a6040;
+  letter-spacing: .1em;
+}
+
+/* ─── scrollbar ─────────────────────────────── */
+#page-track::-webkit-scrollbar { height: 6px; }
+#page-track::-webkit-scrollbar-track { background: #1a1208; }
+#page-track::-webkit-scrollbar-thumb { background: #4a3520; border-radius: 3px; }
+
+/* ─── Page fade-in ──────────────────────────── */
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.page { animation: pageIn .35s ease both; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ヘッダー検索バー -->
+  <div id="topbar">
+    <span class="logo">縦書きビューア</span>
+    <input id="url-input" type="text" placeholder="URLを入力してください（例: https://www3.nhk.or.jp/news/...）" />
+    <button id="fetch-btn" onclick="loadArticle()">読み込む</button>
+  </div>
+
+  <!-- ステータスバー -->
+  <div id="statusbar">
+    <span id="status-title">—</span>
+    <span class="sep">｜</span>
+    <span id="status-domain">—</span>
+    <span class="sep">｜</span>
+    <span id="status-blocks">—</span>
+  </div>
+
+  <!-- ビューア -->
+  <div id="viewer-wrap">
+
+    <!-- Welcome -->
+    <div id="welcome">
+      <div class="welcome-row">
+        <span class="welcome-title">縦書き</span>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <span class="welcome-title" style="font-size:20px;color:#7a6040">PDF風</span>
+          <span class="welcome-title" style="font-size:20px;color:#7a6040">ビューア</span>
+        </div>
+      </div>
+      <span class="welcome-sub">上部のURLバーにWebページのURLを入力して「読み込む」を押してください</span>
+    </div>
+
+    <!-- Loading -->
+    <div id="loading">
+      <div class="spinner"></div>
+      <span>頁を組版しています…</span>
+    </div>
+
+    <!-- Error -->
+    <div id="error-box">
+      <span id="error-msg">エラー</span>
+    </div>
+
+    <!-- Pages track -->
+    <div id="page-track" style="display:none"></div>
+
+  </div>
+
+  <!-- ナビフッター -->
+  <div id="nav-footer">
+    <button class="nav-btn" id="btn-prev" onclick="scrollPage(-1)" disabled>◀ 次のページ</button>
+    <span id="page-indicator">—</span>
+    <button class="nav-btn" id="btn-next" onclick="scrollPage(1)" disabled>前のページ ▶</button>
+  </div>
+</div>
+
+<script>
+const CHARS_PER_PAGE = 600; // 1ページあたりの概算文字数
+
+let pages = [];
+let currentPage = 0;
+
+// ─── ページ構築ロジック ────────────────────────
+function splitToPages(blocks) {
+  const result = [];
+  let currentBlocks = [];
+  let charCount = 0;
+
+  const flush = () => {
+    if (currentBlocks.length > 0) {
+      result.push([...currentBlocks]);
+      currentBlocks = [];
+      charCount = 0;
+    }
+  };
+
+  for (const block of blocks) {
+    const len = block.text.length;
+    // 見出しは常に新ページ先頭に来るよう調整
+    if (block.kind === "heading" && charCount > 0) flush();
+
+    currentBlocks.push(block);
+    charCount += len;
+
+    if (charCount >= CHARS_PER_PAGE) flush();
+  }
+  flush();
+  return result;
+}
+
+function buildPageEl(blockList, pageNum, total) {
+  const page = document.createElement("div");
+  page.className = "page";
+  page.style.animationDelay = `${(total - pageNum) * 0.04}s`;
+
+  // 横罫線オーバーレイ
+  const lines = document.createElement("div");
+  lines.className = "page-lines";
+  page.appendChild(lines);
+
+  // コンテンツエリア
+  const content = document.createElement("div");
+  content.className = "page-content";
+
+  for (const block of blockList) {
+    const el = document.createElement("span");
+    el.className = `t-${block.kind}`;
+    el.textContent = block.text;
+    content.appendChild(el);
+
+    // ブロック間スペーサー
+    const sep = document.createElement("span");
+    sep.className = "block-sep";
+    content.appendChild(sep);
+  }
+
+  page.appendChild(content);
+
+  // ページ番号
+  const num = document.createElement("div");
+  num.className = "page-num";
+  // 縦書きでのページ番号はローマ数字風に
+  num.textContent = `— ${pageNum} —`;
+  page.appendChild(num);
+
+  return page;
+}
+
+// ─── ページスクロール ──────────────────────────
+function scrollPage(dir) {
+  // direction: rtl のため -1 が「次ページ（右）」、+1 が「前ページ（左）」
+  const track = document.getElementById("page-track");
+  const pageWidth = 360 + 2 + 48;
+  track.scrollLeft -= dir * pageWidth;
+  updateNav();
+}
+
+function updateNav() {
+  const track = document.getElementById("page-track");
+  const max = track.scrollWidth - track.clientWidth;
+  const pos = track.scrollLeft;
+
+  document.getElementById("btn-prev").disabled = pos <= 0;
+  document.getElementById("btn-next").disabled = pos >= max - 1;
+
+  const approx = Math.round(pos / (360 + 50)) + 1;
+  document.getElementById("page-indicator").textContent =
+    `${approx} / ${pages.length} 頁`;
+}
+
+// ─── 記事取得 ─────────────────────────────────
+async function loadArticle() {
+  const url = document.getElementById("url-input").value.trim();
+  if (!url) return;
+
+  setState("loading");
+
+  try {
+    const res = await fetch("/fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      setState("error", data.error || "不明なエラー");
+      return;
+    }
+
+    renderArticle(data);
+  } catch (e) {
+    setState("error", "ネットワークエラー: " + e.message);
+  }
+}
+
+function renderArticle(data) {
+  pages = splitToPages(data.blocks);
+  const track = document.getElementById("page-track");
+  track.innerHTML = "";
+
+  if (pages.length === 0) {
+    setState("error", "表示できるテキストが見つかりませんでした");
+    return;
+  }
+
+  // 表紙ページ（タイトル）
+  const coverBlocks = [
+    { kind: "heading", text: data.title || "（タイトルなし）" },
+    { kind: "body", text: `出典: ${data.domain}` },
+  ];
+  const coverEl = buildPageEl(coverBlocks, 1, pages.length + 1);
+  // 表紙は少し大きく
+  coverEl.style.width = "380px";
+  track.appendChild(coverEl);
+
+  // 本文ページ
+  pages.forEach((blockList, i) => {
+    const el = buildPageEl(blockList, i + 2, pages.length + 1);
+    track.appendChild(el);
+  });
+
+  // ステータス更新
+  document.getElementById("status-title").textContent = data.title || "—";
+  document.getElementById("status-domain").textContent = data.domain;
+  document.getElementById("status-blocks").textContent =
+    `${data.blocks.length} 段落 / ${pages.length + 1} 頁`;
+
+  setState("pages");
+
+  // 一番右（表紙）にスクロール
+  track.scrollLeft = 0;
+  updateNav();
+
+  // スクロールイベント
+  track.addEventListener("scroll", updateNav, { passive: true });
+}
+
+function setState(state, msg) {
+  document.getElementById("welcome").style.display = "none";
+  document.getElementById("loading").style.display = "none";
+  document.getElementById("error-box").style.display = "none";
+  document.getElementById("page-track").style.display = "none";
+
+  document.getElementById("btn-prev").disabled = true;
+  document.getElementById("btn-next").disabled = true;
+
+  if (state === "loading") {
+    document.getElementById("loading").style.display = "flex";
+    document.getElementById("fetch-btn").disabled = true;
+  } else if (state === "error") {
+    document.getElementById("error-box").style.display = "flex";
+    document.getElementById("error-msg").textContent = msg;
+    document.getElementById("fetch-btn").disabled = false;
+  } else if (state === "pages") {
+    document.getElementById("page-track").style.display = "flex";
+    document.getElementById("fetch-btn").disabled = false;
+    document.getElementById("btn-prev").disabled = false;
+    document.getElementById("btn-next").disabled = false;
+    document.getElementById("page-indicator").textContent =
+      `1 / ${pages.length + 1} 頁`;
+  }
+}
+
+// Enterキー対応
+document.getElementById("url-input").addEventListener("keydown", e => {
+  if (e.key === "Enter") loadArticle();
+});
+
+// キーボードナビ
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowLeft")  scrollPage(1);
+  if (e.key === "ArrowRight") scrollPage(-1);
+});
+</script>
+</body>
+</html>
